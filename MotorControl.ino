@@ -278,8 +278,8 @@ void can_callback() {
 		canDataReceived[i] = canutil.receivedDataValue(0, i);
 	}
 
-	float leftSpeed = ((float)((int8_t)data_buf[0] + (int8_t)ddta_buf[1]))/(float)256 ;
-	float rightSpeed = ((float)(-(int8_t)data_buf[0] + (int8_t)data_buf[1]))/(float)256 ;
+	float leftSpeed = ((float)((int8_t)canDataReceived[0] + (int8_t)canDataReceived[1]))/(float)256 ;
+	float rightSpeed = ((float)(-(int8_t)canDataReceived[0] + (int8_t)canDataReceived[1]))/(float)256 ;
 
 	percentPowerRight = (int) rightSpeed * 100;
 	percentPowerLeft = (int) leftSpeed * 100;

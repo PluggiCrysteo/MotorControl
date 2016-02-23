@@ -9,6 +9,11 @@
 #define codeurPinC 4
 #define codeurPinD 7
 
+//	CAN NODE ID
+#define REMOTE_NODE_ID 0x10
+#define POWER_ANGLE_MESS_ID 0x1
+#define OWN_NODE_ID 0x4
+
 volatile long tick_codeuseA = 0;    // Compteur de tick de la codeuse
 volatile long tick_codeuseC = 0;
 
@@ -59,6 +64,8 @@ int maxPower = 100;
 //volatile int percentPowerLeft = (nbTicksLeftPerSec/3500.0) *100;
 volatile int percentPowerRight = 0;
 volatile int percentPowerLeft = 0;
+volatile int powerReceived = 0;
+volatile int angleReceived = 0;
 
 MCP2510  can_dev (9); // defines pb1 (arduino pin9) as the _CS pin for MCP2510
 Canutil  canutil(can_dev);
@@ -97,11 +104,9 @@ void setup() {
 	can_dev.write(CNF3, 0x05);  // WAKFIL = 0, PHSEG2 = 5
 
 	// SETUP MASKS / FILTERS FOR CAN
-	canutil.setRxOperatingMode(1, 1, 0);  // standard ID messages only  and rollover
-	canutil.setAcceptanceFilter(0x10, 0x1, 0, 1); // 0 <= stdID <= 2047, 0 <= extID <= 262143, 1 = extended, filter# 0
+	canutil.setRxOperatingMode(2, 1, 0);  // standard ID messages only  and rollover
+	canutil.setAcceptanceFilter(REMOTE_NODE_ID, POWER_ANGLE_MESS_ID, 1, 0); // 0 <= stdID <= 2047, 0 <= extID <= 262143, 1 = extended, filter# 0
 	canutil.setAcceptanceMask(0x000, 0x00000000, 0); // 0 <= stdID <= 2047, 0 <= extID <= 262143, buffer# 0
-
-	can_dev.write(CANINTF, 0x00);	
 
 	canutil.setOpMode(0); // sets normal mode
 
@@ -278,9 +283,6 @@ void can_callback() {
 		canDataReceived[i] = canutil.receivedDataValue(0, i);
 	}
 
-	float leftSpeed = ((float)((int8_t)canDataReceived[0] + (int8_t)canDataReceived[1]))/(float)256 ;
-	float rightSpeed = ((float)(-(int8_t)canDataReceived[0] + (int8_t)canDataReceived[1]))/(float)256 ;
-
-	percentPowerRight = (int) rightSpeed * 100;
-	percentPowerLeft = (int) leftSpeed * 100;
+	powerReceived = canDataReceived[0];
+	angleReceived = (int8_t)canDataReceived[1];
 }

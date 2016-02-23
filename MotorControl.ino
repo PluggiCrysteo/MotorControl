@@ -3,6 +3,7 @@
 #include <Canutil.h>
 #include <SPI.h>
 #include <MCP2510.h>
+#include <Wire.h>
 
 #define codeurPinA 3
 #define codeurPinB 2 //brancher le codeur B sur le PIN 2
@@ -24,6 +25,8 @@ int Motor_Right_PWM_N = 6;
 int Motor_Left_PWM_P = 5;
 int Motor_Left_PWM_N = 8;
 
+long oneSecInMillis = 1000;
+
 double nbOfTicksPerRotationRight = 3500;
 double nbOfTicksPerRotationLeft = 3500;
 int diameterMM = 150;
@@ -32,26 +35,23 @@ double circonference = 3.14159*diameterMM;
 double nbTicksRightPerMM = nbOfTicksPerRotationRight / circonference;
 double nbTicksLeftPerMM = nbOfTicksPerRotationLeft / circonference;
 
-double distanceBetween2Wheels = 460; //en mm
+double distanceBetweenWheels = 460; //en mm
 
-double speedWheelMS = - 0.4 ;
+double maxSpeed = 1;
+double speedMS = 0.1 ;
 
-double distanceEntered= speedWheelMS*1000; // in m/s
+double speedMMS= speedMS*1000; // in m/s
 
-//int angleEntered=10;
+//Radius of circle given Alpha turn angle = (23*180)/(Alpha)
+//  See documentation for equations explaination
 
-//double inRadians = 3.14159*(90-angleEntered)/180.0;
+double angleEntered=0;
+double circRadius;  //Found in mm
+double speedLeft;   //Speeds found in mm/s
+double speedRight;  
 
-//double w=distanceBetween2Wheels*cos(inRadians);
-
-//double distanceLeft = distanceEntered - 2*w;
-//double distanceRight = 2*distanceEntered - distanceLeft;
-
-double speedLeft = distanceEntered;
-double speedRight = distanceEntered;
-
-double nbTicksRightPerSec = speedRight*nbTicksRightPerMM;
-double nbTicksLeftPerSec = speedLeft*nbTicksLeftPerMM;
+double nbTicksRightPerSec;
+double nbTicksLeftPerSec;
 
 int maxPower = 100;
 
@@ -106,6 +106,47 @@ void setup() {
 	canutil.setOpMode(0); // sets normal mode
 
 	attachInterrupt(1, can_callback, FALLING);
+        
+        //Determine speed of each wheel based on angle and speed given
+        if(angleEntered > 0){
+          circRadius = (distanceBetweenWheels/2)*180/angleEntered;
+          
+          if(speedMMS > maxSpeed){
+            speedLeft = maxSpeed;
+          } else if (speedMMS < -maxSpeed){
+            speedLeft = -maxSpeed;
+          } else {
+            speedLeft = speedMMS;
+          }
+        
+          if(circRadius > distanceBetweenWheels){
+            speedRight = (circRadius*speedLeft)/(circRadius-distanceBetweenWheels);
+          } else {
+            speedRight = 0;
+          }
+        } else if(angleEntered < 0){
+          circRadius = (distanceBetweenWheels/2)*180/(-1*angleEntered);
+         
+          if(speedMMS > maxSpeed){
+            speedRight = maxSpeed;
+          } else if (speedMMS < -maxSpeed){
+            speedRight = -maxSpeed;
+          } else {
+            speedRight = speedMMS;
+          }
+          
+          if(circRadius > distanceBetweenWheels){
+            speedLeft = (circRadius*speedRight)/(circRadius-distanceBetweenWheels);
+          } else {
+            speedLeft = 0;
+          }
+        } else {
+          speedLeft = speedMMS;
+          speedRight = speedLeft;
+        }
+        
+        nbTicksRightPerSec = speedRight*nbTicksRightPerMM;
+        nbTicksLeftPerSec = speedLeft*nbTicksLeftPerMM;
 }
 
 void loop() {
@@ -131,12 +172,13 @@ void loop() {
 	long start = millis();
 	long startTicksRight = tick_codeuseA;
 	long startTicksLeft = tick_codeuseC;
-	while(millis() - start < 1000){
+        long checkFasterBy = 100;
+	while(millis() - start < (oneSecInMillis/checkFasterBy)){
 	}
 	// Compare distance traveled over time
 	// Change power based on difference of real speed vs given speed
-	percentPowerRight *= 1.0+((nbTicksRightPerSec - (tick_codeuseA - startTicksRight))/nbTicksRightPerSec);
-	percentPowerLeft *= 1.0+((nbTicksLeftPerSec - (tick_codeuseC - startTicksLeft))/nbTicksLeftPerSec);
+	percentPowerRight *= 1.0+((nbTicksRightPerSec - (tick_codeuseA - startTicksRight))/(nbTicksRightPerSec/checkFasterBy));
+	percentPowerLeft *= 1.0+((nbTicksLeftPerSec - (tick_codeuseC - startTicksLeft))/(nbTicksLeftPerSec/checkFasterBy));
 
 	Serial.println(tick_codeuseA - startTicksRight);
 	Serial.println(tick_codeuseC - startTicksLeft);

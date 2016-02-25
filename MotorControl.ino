@@ -1,5 +1,5 @@
 #include <digitalWriteFast.h>
-#include <Math.h>
+//#include <Math.h>
 #include <Canutil.h>
 #include <SPI.h>
 #include <MCP2510.h>
@@ -67,7 +67,7 @@ volatile int percentPowerLeft = 0;
 volatile int powerReceived = 0;
 volatile int angleReceived = 0;
 
-MCP2510  can_dev (9); // defines pb1 (arduino pin9) as the _CS pin for MCP2510
+MCP2510  can_dev (53); // defines pb1 (arduino pin9) as the _CS pin for MCP2510
 Canutil  canutil(can_dev);
 uint8_t txstatus;
 
@@ -110,7 +110,7 @@ void setup() {
 
 	canutil.setOpMode(0); // sets normal mode
 
-	attachInterrupt(1, can_callback, FALLING);
+	attachInterrupt(42, can_callback, FALLING);
         
         //Determine speed of each wheel based on angle and speed given
         if(angleEntered > 0){
@@ -327,4 +327,8 @@ void can_callback() {
 
 	powerReceived = canDataReceived[0];
 	angleReceived = (int8_t)canDataReceived[1];
+	Serial.print("Power received: ");
+	Serial.println(powerReceived);
+	Serial.print("Angle received: ");
+	Serial.println(angleReceived);
 }

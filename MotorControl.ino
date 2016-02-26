@@ -7,13 +7,16 @@
 
 #define codeurPinA 3
 #define codeurPinB 2 //brancher le codeur B sur le PIN 2
-#define codeurPinC 4
+#define codeurPinC 11
 #define codeurPinD 7
 
-//	CAN NODE ID
+//	CAN DEFINE
 #define REMOTE_NODE_ID 0x10
 #define POWER_ANGLE_MESS_ID 0x1
 #define OWN_NODE_ID 0x4
+
+#define CAN_INTERRUPT_PIN 42
+#define CAN_SS_PIN 52
 
 volatile long tick_codeuseA = 0;    // Compteur de tick de la codeuse
 volatile long tick_codeuseC = 0;
@@ -67,16 +70,23 @@ volatile int percentPowerLeft = 0;
 volatile int powerReceived = 0;
 volatile int angleReceived = 0;
 
-MCP2510  can_dev (53); // defines pb1 (arduino pin9) as the _CS pin for MCP2510
-Canutil  canutil(can_dev);
-uint8_t txstatus;
+MCP2510* can_dev;
+Canutil* canutil;
 
 void setup() {
 	Serial.begin(9600); 
 
-	attachInterrupt(2, compteurA, RISING);  // Interruption sur tick de la codeuse (interruption 0 = pin3 arduino nano)
+	pinMode(4,OUTPUT);
+	pinMode(10,OUTPUT);
+	pinMode(52,OUTPUT);
+	pinMode(CAN_INTERRUPT_PIN, INPUT);
+	can_dev = new MCP2510(CAN_SS_PIN); // defines pb1 (arduino pin9) as the _CS pin for MCP2510
+	canutil = new Canutil(*can_dev);
+	uint8_t txstatus;
+
+//	attachInterrupt(2, compteurA, RISING);  // Interruption sur tick de la codeuse (interruption 0 = pin3 arduino nano)
 	//attachInterrupt(3, compteurB, RISING);  // Interruption sur tick de la codeuse (interruption 1 = pin2 arduino nano)
-	attachInterrupt(7, compteurC, RISING);
+//	attachInterrupt(7, compteurC, RISING);
 	//attachInterrupt(4, compteurD, RISING);
 
 	pinMode(codeurPinA, INPUT);
@@ -84,79 +94,44 @@ void setup() {
 
 	Motor_Setup();
 
-	Serial.println(speedLeft);
-	Serial.println(speedRight);
+	//	Serial.println(speedLeft);
+	//	Serial.println(speedRight);
 
-	can_dev.write(CANINTE, 0x01); //disables all interrupts but RX0IE (received message in RX buffer 0)
-	can_dev.write(CANINTF, 0x00);  // Clears all interrupts flags
+	can_dev->write(CANINTE, 0x01); //disables all interrupts but RX0IE (received message in RX buffer 0)
+	can_dev->write(CANINTF, 0x00);  // Clears all interrupts flags
 
-	canutil.setClkoutMode(0, 0); // disables CLKOUT
-	canutil.setTxnrtsPinMode(0, 0, 0); // all TXnRTS pins as all-purpose digital input
+	canutil->setClkoutMode(0, 0); // disables CLKOUT
+	canutil->setTxnrtsPinMode(0, 0, 0); // all TXnRTS pins as all-purpose digital input
 
-	canutil.setOpMode(4); // sets configuration mode
+	canutil->setOpMode(4); // sets configuration mode
 	// IMPORTANT NOTE: configuration mode is the ONLY mode where bit timing registers (CNF1, CNF2, CNF3), acceptance
 	// filters and acceptance masks can be modified
+	Serial.println("waiting for op mode");
+	canutil->waitOpMode(4);  // waits configuration mode
+	Serial.println("opmode received");
 
-	canutil.waitOpMode(4);  // waits configuration mode
-
-	can_dev.write(CNF1, 0x03); // SJW = 1, BRP = 3
-	can_dev.write(CNF2, 0b10110001); //BLTMODE = 1, SAM = 0, PHSEG = 6, PRSEG = 1
-	can_dev.write(CNF3, 0x05);  // WAKFIL = 0, PHSEG2 = 5
+	can_dev->write(CNF1, 0x03); // SJW = 1, BRP = 3
+	can_dev->write(CNF2, 0b10110001); //BLTMODE = 1, SAM = 0, PHSEG = 6, PRSEG = 1
+	can_dev->write(CNF3, 0x05);  // WAKFIL = 0, PHSEG2 = 5
 
 	// SETUP MASKS / FILTERS FOR CAN
-	canutil.setRxOperatingMode(2, 1, 0);  // standard ID messages only  and rollover
-	canutil.setAcceptanceFilter(REMOTE_NODE_ID, POWER_ANGLE_MESS_ID, 1, 0); // 0 <= stdID <= 2047, 0 <= extID <= 262143, 1 = extended, filter# 0
-	canutil.setAcceptanceMask(0x000, 0x00000000, 0); // 0 <= stdID <= 2047, 0 <= extID <= 262143, buffer# 0
+	canutil->setRxOperatingMode(2,1, 0);  // standard ID messages only  and rollover
+//	canutil->setAcceptanceFilter(REMOTE_NODE_ID, POWER_ANGLE_MESS_ID, 1, 0); // 0 <= stdID <= 2047, 0 <= extID <= 262143, 1 = extended, filter# 0
+canutil->setAcceptanceFilter(0,0, 1, 0); // 0 <= stdID <= 2047, 0 <= extID <= 262143, 1 = extended, filter# 0
+	canutil->setAcceptanceMask(0x000, 0x00000000, 0); // 0 <= stdID <= 2047, 0 <= extID <= 262143, buffer# 0
 
-	canutil.setOpMode(0); // sets normal mode
+	canutil->setOpMode(0); // sets normal mode
+	can_dev->write(CANINTF, 0x00);  // Clears all interrupts flags
+	Serial.println(digitalRead(42));
+//	attachInterrupt(CAN_INTERRUPT_PIN, can_callback, FALLING);
+	Serial.println(digitalRead(42));
 
-	attachInterrupt(42, can_callback, FALLING);
-        
-        //Determine speed of each wheel based on angle and speed given
-        if(angleEntered > 0){
-          circRadius = (distanceBetweenWheels/2)*180/angleEntered;
-          
-          if(speedMMS > maxSpeed){
-            speedLeft = maxSpeed;
-          } else if (speedMMS < -maxSpeed){
-            speedLeft = -maxSpeed;
-          } else {
-            speedLeft = speedMMS;
-          }
-        
-          if(circRadius > distanceBetweenWheels){
-            speedRight = (circRadius*speedLeft)/(circRadius-distanceBetweenWheels);
-          } else {
-            speedRight = 0;
-          }
-        } else if(angleEntered < 0){
-          circRadius = (distanceBetweenWheels/2)*180/(-1*angleEntered);
-         
-          if(speedMMS > maxSpeed){
-            speedRight = maxSpeed;
-          } else if (speedMMS < -maxSpeed){
-            speedRight = -maxSpeed;
-          } else {
-            speedRight = speedMMS;
-          }
-          
-          if(circRadius > distanceBetweenWheels){
-            speedLeft = (circRadius*speedRight)/(circRadius-distanceBetweenWheels);
-          } else {
-            speedLeft = 0;
-          }
-        } else {
-          speedLeft = speedMMS;
-          speedRight = speedLeft;
-        }
-        
-        nbTicksRightPerSec = speedRight*nbTicksRightPerMM;
-        nbTicksLeftPerSec = speedLeft*nbTicksLeftPerMM;
-}
+	}
 
 void loop() {
+	//Serial.println(digitalRead(CAN_INTERRUPT_PIN));
 	// Give expected power according to given speed
-
+/*
 	if (percentPowerRight > maxPower){
 		percentPowerRight = maxPower;
 	}
@@ -169,24 +144,24 @@ void loop() {
 	if (percentPowerLeft < -maxPower){
 		percentPowerLeft = -maxPower;
 	}
-	Serial.println(percentPowerRight);
-	Serial.println(percentPowerLeft);
+	//Serial.println(percentPowerRight);
+	//Serial.println(percentPowerLeft);
 	Right_Motor(percentPowerRight);
 	Left_Motor(percentPowerLeft);
 	// Record ticks over time
 	long start = millis();
 	long startTicksRight = tick_codeuseA;
 	long startTicksLeft = tick_codeuseC;
-        long checkFasterBy = 100;
+	long checkFasterBy = 100;
 	while(millis() - start < (oneSecInMillis/checkFasterBy)){
 	}
 	// Compare distance traveled over time
 	// Change power based on difference of real speed vs given speed
 	percentPowerRight *= 1.0+((nbTicksRightPerSec - (tick_codeuseA - startTicksRight))/(nbTicksRightPerSec/checkFasterBy));
 	percentPowerLeft *= 1.0+((nbTicksLeftPerSec - (tick_codeuseC - startTicksLeft))/(nbTicksLeftPerSec/checkFasterBy));
-
-	Serial.println(tick_codeuseA - startTicksRight);
-	Serial.println(tick_codeuseC - startTicksLeft);
+*/
+	//Serial.println(tick_codeuseA - startTicksRight);
+	//Serial.println(tick_codeuseC - startTicksLeft);
 }
 
 //----------------------------------------------------Compteurs--------------------------------------------------------------
@@ -314,21 +289,23 @@ int convert_pourcent_to_digital(int pourcentage)  //Convertit un pourcentage pos
 }
 
 void can_callback() {
+	Serial.println(digitalRead(CAN_INTERRUPT_PIN));
 	uint8_t canDataReceived[8];
-	uint8_t recSize = canutil.whichRxDataLength(0); 
-	uint16_t stdId = canutil.whichStdID(0);
-	uint32_t extId = canutil.whichExtdID(0);
+	uint8_t recSize = canutil->whichRxDataLength(0); 
+	uint16_t stdId = canutil->whichStdID(0);
+	uint32_t extId = canutil->whichExtdID(0);
 
-	can_dev.write(CANINTF, 0x00);  // Clears all interrupts flags
+	can_dev->write(CANINTF, 0x00);  // Clears all interrupts flags
 
 	for (uint8_t i = 0; i < recSize; i++) { // gets the bytes
-		canDataReceived[i] = canutil.receivedDataValue(0, i);
+		canDataReceived[i] = canutil->receivedDataValue(0, i);
 	}
 
-	powerReceived = canDataReceived[0];
+	powerReceived = (int8_t)canDataReceived[0];
 	angleReceived = (int8_t)canDataReceived[1];
 	Serial.print("Power received: ");
 	Serial.println(powerReceived);
 	Serial.print("Angle received: ");
 	Serial.println(angleReceived);
+	Serial.println(digitalRead(CAN_INTERRUPT_PIN));
 }

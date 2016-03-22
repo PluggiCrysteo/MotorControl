@@ -10,7 +10,7 @@
 #define codeurPinC 11
 #define codeurPinD 7
 
-//	CAN DEFINE
+//  CAN DEFINE
 #define REMOTE_NODE_ID 0x10
 #define POWER_ANGLE_MESS_ID 0x1
 #define OWN_NODE_ID 0x4
@@ -28,10 +28,10 @@ int etatA = 0;
 int etatC = 0;
 
 //moteur
-int Motor_Right_PWM_P = 9;
-int Motor_Right_PWM_N = 6;
-int Motor_Left_PWM_P = 5;
-int Motor_Left_PWM_N = 8;
+int Motor_Right_PWM_P = 5;
+int Motor_Right_PWM_N = 8;
+int Motor_Left_PWM_P = 9;
+int Motor_Left_PWM_N = 6;
 
 long oneSecInMillis = 1000;
 
@@ -63,6 +63,11 @@ double nbTicksLeftPerSec;
 
 int maxPower = 100;
 
+long checkFasterBy = 10;
+
+long startTicksRight;
+long startTicksLeft;
+
 //volatile int percentPowerRight = (nbTicksRightPerSec/3500.0) *100;
 //volatile int percentPowerLeft = (nbTicksLeftPerSec/3500.0) *100;
 int percentPowerRight = 0;
@@ -70,151 +75,172 @@ int percentPowerLeft = 0;
 volatile int powerReceived = 0;
 volatile int angleReceived = 0;
 
+int oldPowerRecieved = 0;
+int oldAngleRecieved = 0;
+
 MCP2510* can_dev;
 Canutil* canutil;
 
 void setup() {
-	Serial.begin(9600); 
+  Serial.begin(9600); 
 
-	pinMode(4,OUTPUT);
-	pinMode(10,OUTPUT);
-	pinMode(52,OUTPUT);
-	pinMode(CAN_INTERRUPT_PIN, INPUT);
-	can_dev = new MCP2510(CAN_SS_PIN); // defines pb1 (arduino pin9) as the _CS pin for MCP2510
-	canutil = new Canutil(*can_dev);
-	uint8_t txstatus;
+  pinMode(4,OUTPUT);
+  pinMode(10,OUTPUT);
+  pinMode(52,OUTPUT);
+  pinMode(CAN_INTERRUPT_PIN, INPUT);
+  can_dev = new MCP2510(CAN_SS_PIN); // defines pb1 (arduino pin9) as the _CS pin for MCP2510
+  canutil = new Canutil(*can_dev);
+  uint8_t txstatus;
 
-		attachInterrupt(2, compteurA, RISING);  // Interruption sur tick de la codeuse (interruption 0 = pin3 arduino nano)
-	//attachInterrupt(3, compteurB, RISING);  // Interruption sur tick de la codeuse (interruption 1 = pin2 arduino nano)
-	//	attachInterrupt(7, compteurC, RISING);
-	//attachInterrupt(4, compteurD, RISING);
+    attachInterrupt(2, compteurA, RISING);  // Interruption sur tick de la codeuse (interruption 0 = pin3 arduino nano)
+  //attachInterrupt(3, compteurB, RISING);  // Interruption sur tick de la codeuse (interruption 1 = pin2 arduino nano)
+    attachInterrupt(7, compteurC, RISING);
+  //attachInterrupt(4, compteurD, RISING);
 
-	pinMode(codeurPinA, INPUT);
-	pinMode(codeurPinC,INPUT);
+  pinMode(codeurPinA, INPUT);
+  pinMode(codeurPinC,INPUT);
 
-	Motor_Setup();
+  Serial.println("setup");
+  
+  Motor_Setup();
 
-	//	Serial.println(speedLeft);
-	//	Serial.println(speedRight);
+  //  Serial.println(speedLeft);
+  //  Serial.println(speedRight);
 
-	can_dev->write(CANINTE, 0x01); //disables all interrupts but RX0IE (received message in RX buffer 0)
-	can_dev->write(CANINTF, 0x00);  // Clears all interrupts flags
+  can_dev->write(CANINTE, 0x01); //disables all interrupts but RX0IE (received message in RX buffer 0)
+  can_dev->write(CANINTF, 0x00);  // Clears all interrupts flags
 
-	canutil->setClkoutMode(0, 0); // disables CLKOUT
-	canutil->setTxnrtsPinMode(0, 0, 0); // all TXnRTS pins as all-purpose digital input
+  canutil->setClkoutMode(0, 0); // disables CLKOUT
+  canutil->setTxnrtsPinMode(0, 0, 0); // all TXnRTS pins as all-purpose digital input
 
-	canutil->setOpMode(4); // sets configuration mode
-	// IMPORTANT NOTE: configuration mode is the ONLY mode where bit timing registers (CNF1, CNF2, CNF3), acceptance
-	// filters and acceptance masks can be modified
-	Serial.println("waiting for op mode");
-	canutil->waitOpMode(4);  // waits configuration mode
-	Serial.println("opmode received");
+  canutil->setOpMode(4); // sets configuration mode
+  // IMPORTANT NOTE: configuration mode is the ONLY mode where bit timing registers (CNF1, CNF2, CNF3), acceptance
+  // filters and acceptance masks can be modified
+  Serial.println("waiting for op mode");
+  canutil->waitOpMode(4);  // waits configuration mode
+  Serial.println("opmode received");
 
-	can_dev->write(CNF1, 0x03); // SJW = 1, BRP = 3
-	can_dev->write(CNF2, 0b10110001); //BLTMODE = 1, SAM = 0, PHSEG = 6, PRSEG = 1
-	can_dev->write(CNF3, 0x05);  // WAKFIL = 0, PHSEG2 = 5
+  can_dev->write(CNF1, 0x03); // SJW = 1, BRP = 3
+  can_dev->write(CNF2, 0b10110001); //BLTMODE = 1, SAM = 0, PHSEG = 6, PRSEG = 1
+  can_dev->write(CNF3, 0x05);  // WAKFIL = 0, PHSEG2 = 5
 
-	// SETUP MASKS / FILTERS FOR CAN
-	canutil->setRxOperatingMode(2,1, 0);  // standard ID messages only  and rollover
-	//	canutil->setAcceptanceFilter(REMOTE_NODE_ID, POWER_ANGLE_MESS_ID, 1, 0); // 0 <= stdID <= 2047, 0 <= extID <= 262143, 1 = extended, filter# 0
-	canutil->setAcceptanceFilter(0,0, 1, 0); // 0 <= stdID <= 2047, 0 <= extID <= 262143, 1 = extended, filter# 0
-	canutil->setAcceptanceMask(0x000, 0x00000000, 0); // 0 <= stdID <= 2047, 0 <= extID <= 262143, buffer# 0
+  // SETUP MASKS / FILTERS FOR CAN
+  canutil->setRxOperatingMode(2,1, 0);  // standard ID messages only  and rollover
+  //  canutil->setAcceptanceFilter(REMOTE_NODE_ID, POWER_ANGLE_MESS_ID, 1, 0); // 0 <= stdID <= 2047, 0 <= extID <= 262143, 1 = extended, filter# 0
+  canutil->setAcceptanceFilter(0,0, 1, 0); // 0 <= stdID <= 2047, 0 <= extID <= 262143, 1 = extended, filter# 0
+  canutil->setAcceptanceMask(0x000, 0x00000000, 0); // 0 <= stdID <= 2047, 0 <= extID <= 262143, buffer# 0
 
-	canutil->setOpMode(0); // sets normal mode
-	can_dev->write(CANINTF, 0x00);  // Clears all interrupts flags
-	Serial.println(digitalRead(42));
+  canutil->setOpMode(0); // sets normal mode
+  can_dev->write(CANINTF, 0x00);  // Clears all interrupts flags
+  Serial.println(digitalRead(42));
 
-	//	pinMode(CAN_INTERRUPT_PIN,OUTPUT);
-	SPI.usingInterrupt(CAN_INTERRUPT_PIN);
-	attachInterrupt(CAN_INTERRUPT_PIN, can_callback, FALLING);
-	Serial.println(digitalRead(42));
+  //  pinMode(CAN_INTERRUPT_PIN,OUTPUT);
+  SPI.usingInterrupt(CAN_INTERRUPT_PIN);
+  attachInterrupt(CAN_INTERRUPT_PIN, can_callback, FALLING);
+  Serial.println(digitalRead(42));
 
+  powerReceived = 0;
+  angleReceived = 0;
 }
 
 void loop() {
-	//Serial.println(digitalRead(CAN_INTERRUPT_PIN));
-	// Give expected pow/er according to given speed
+  //Serial.println(digitalRead(CAN_INTERRUPT_PIN));
+  // Give expected power according to given speed
 
-	speedMMS = maxSpeed * powerReceived * 10;
-//	Serial.println(speedMMS);
-	angleEntered = angleReceived;
-//	Serial.println(angleEntered);
+  Serial.print("powerReceived"); Serial.println(powerReceived);
 
-	if(angleEntered > 0){
-		circRadius = (distanceBetweenWheels/2)*180/angleEntered;
+  speedMMS = maxSpeed * powerReceived/100.0;
+  Serial.println(speedMMS);
+  angleEntered = angleReceived;
+//  Serial.println(angleEntered);
 
-		if(speedMMS > maxSpeed){
-			speedLeft = maxSpeed;
-		} else if (speedMMS < -maxSpeed){
-			speedLeft = -maxSpeed;
-		} else {
-			speedLeft = speedMMS;
-		}
+  if(angleEntered > 0){
+    circRadius = (distanceBetweenWheels/2)*180/angleEntered;
 
-		if(circRadius > distanceBetweenWheels){
-			speedRight = (speedLeft*(circRadius-distanceBetweenWheels))/(circRadius);
-		} else {
-			speedRight = 0;
-		}
-	} else if(angleEntered < 0){
-		circRadius = (distanceBetweenWheels/2)*180/(-1*angleEntered);
+    if(speedMMS > maxSpeed){
+      speedLeft = maxSpeed;
+    } else if (speedMMS < -maxSpeed){
+      speedLeft = -maxSpeed;
+    } else {
+      speedLeft = speedMMS;
+    }
 
-		if(speedMMS > maxSpeed){
-			speedRight = maxSpeed;
-		} else if (speedMMS < -maxSpeed){
-			speedRight = -maxSpeed;
-		} else {
-			speedRight = speedMMS;
-		}
+    if(circRadius > distanceBetweenWheels){
+      speedRight = (speedLeft*(circRadius-distanceBetweenWheels))/(circRadius);
+    } else {
+      speedRight = 0;
+    }
+  } else if(angleEntered < 0){
+    circRadius = (distanceBetweenWheels/2)*180/(-1*angleEntered);
 
-		if(circRadius > distanceBetweenWheels){
-			speedLeft = (speedRight*(circRadius-distanceBetweenWheels))/(circRadius);
-		} else {
-			speedLeft = 0;
-		}
-	} else {
-		speedLeft = speedMMS;
-		speedRight = speedLeft;
-	}
+    if(speedMMS > maxSpeed){
+      speedRight = maxSpeed;
+    } else if (speedMMS < -maxSpeed){
+      speedRight = -maxSpeed;
+    } else {
+      speedRight = speedMMS;
+    }
 
+    if(circRadius > distanceBetweenWheels){
+      speedLeft = (speedRight*(circRadius-distanceBetweenWheels))/(circRadius);
+    } else {
+      speedLeft = 0;
+    }
+  } else {
+    speedLeft = speedMMS;
+    speedRight = speedLeft;
+  }
 
-	nbTicksRightPerSec = speedRight*nbTicksRightPerMM;
-	nbTicksLeftPerSec = speedLeft*nbTicksLeftPerMM;
-	Serial.println(nbTicksRightPerSec);
-	Serial.println(nbTicksLeftPerSec);
+  Serial.print("Speed Left"); Serial.println(speedLeft);
+  Serial.print("Speed Right"); Serial.println(speedRight);
 
-	percentPowerRight = (nbTicksRightPerSec/3500.0) *100;
-	percentPowerLeft = (nbTicksLeftPerSec/3500.0) *100;
-	if (percentPowerRight > maxPower){
-		percentPowerRight = maxPower;
-	}
-	if (percentPowerLeft > maxPower){
-		percentPowerLeft = maxPower;
-	}
-	if (percentPowerRight < -maxPower){
-		percentPowerRight = -maxPower;
-	}
-	if (percentPowerLeft < -maxPower){
-		percentPowerLeft = -maxPower;
-	}
-	Serial.println(percentPowerRight);
-	Serial.println(percentPowerLeft);
-	Right_Motor(percentPowerRight);
-	Left_Motor(percentPowerLeft);
-	// Record ticks over time
-	long start = millis();
-	long startTicksRight = tick_codeuseA;
-	long startTicksLeft = tick_codeuseC;
-	long checkFasterBy = 1;
-	while(millis() - start < (oneSecInMillis/checkFasterBy)){
-	}
-	// Compare distance traveled over time
-	// Change power based on difference of real speed vs given speed
-	percentPowerRight *= 1.0+((nbTicksRightPerSec - (tick_codeuseA - startTicksRight))/(nbTicksRightPerSec/checkFasterBy));
-	percentPowerLeft *= 1.0+((nbTicksLeftPerSec - (tick_codeuseC - startTicksLeft))/(nbTicksLeftPerSec/checkFasterBy));
+  nbTicksRightPerSec = speedRight*nbTicksRightPerMM/checkFasterBy;
+  nbTicksLeftPerSec = speedLeft*nbTicksLeftPerMM/checkFasterBy;
+  Serial.println(nbTicksRightPerSec);
+  Serial.println(nbTicksLeftPerSec); 
+  
+  if (percentPowerRight == 0 || nbTicksRightPerSec == 0){
+      percentPowerRight = (nbTicksRightPerSec/3500.0) * 100 * checkFasterBy; 
+  } else {
+      percentPowerRight *= 1.0+((nbTicksRightPerSec - (tick_codeuseC - startTicksRight))/(nbTicksRightPerSec));
+  }
+  
+  if (percentPowerLeft == 0 || nbTicksLeftPerSec == 0){
+      percentPowerLeft = (nbTicksLeftPerSec/3500.0) * 100 * checkFasterBy;
+  } else {
+      percentPowerLeft *= 1.0+((nbTicksLeftPerSec - (tick_codeuseA - startTicksLeft))/(nbTicksLeftPerSec));
+      //Serial.println(1.0+((nbTicksLeftPerSec - (tick_codeuseA - startTicksLeft))/(nbTicksLeftPerSec)));
+      //Serial.println(percentPowerLeft);
+  }
 
-	//Serial.println(tick_codeuseA - startTicksRight);
-	//Serial.println(tick_codeuseC - startTicksLeft);
+  if (percentPowerRight > maxPower){
+    percentPowerRight = maxPower;
+  }
+  if (percentPowerLeft > maxPower){
+    percentPowerLeft = maxPower;
+  }
+  if (percentPowerRight < -maxPower){
+    percentPowerRight = -maxPower;
+  }
+  if (percentPowerLeft < -maxPower){
+    percentPowerLeft = -maxPower;
+  }
+  //Serial.print(percentPowerRight);Serial.println("%");
+  //Serial.print(percentPowerLeft);Serial.println("%");
+  Right_Motor(percentPowerRight);
+  Left_Motor(percentPowerLeft);
+  
+  // Record ticks over time
+  long start = millis();
+  startTicksRight = tick_codeuseC;
+  startTicksLeft = tick_codeuseA;
+  while(millis() - start < (oneSecInMillis/checkFasterBy)){
+  }
+  // Compare distance traveled over time
+  // Change power based on difference of real speed vs given speed
+
+  //Serial.print("Dif R ");Serial.println(tick_codeuseC - startTicksRight);
+  //Serial.print("Dif L ");Serial.println(tick_codeuseA - startTicksLeft);
 }
 
 //----------------------------------------------------Compteurs--------------------------------------------------------------
@@ -222,144 +248,147 @@ void loop() {
 // Moteur 1
 void compteurA(){
 
-	if (digitalRead(codeurPinA) == digitalRead(codeurPinB)){
-		tick_codeuseA++;
-		sensMotor1 = 1;
-	}
-	else {
-		tick_codeuseA--;
-		sensMotor1 = -1;
-	}
-	etatA = 1;
+  if (digitalRead(codeurPinA) == digitalRead(codeurPinB)){
+    tick_codeuseA--;
+    sensMotor1 = -1;
+  }
+  else {
+    tick_codeuseA++;
+    sensMotor1 = 1;
+  }
+  etatA = 1;
 }
 
 void compteurB(){
-	// tick_codeuseB++;
+  // tick_codeuseB++;
 
 
-	if (etatA = 0){
-		sensMotor1 = sensMotor1 * (-1);
-	}
+  if (etatA = 0){
+    sensMotor1 = sensMotor1 * (-1);
+  }
 
-	etatA = 0;
+  etatA = 0;
 }
 
 // Moteur 2
 void compteurC(){
 
-	if (digitalRead(codeurPinC) == digitalRead(codeurPinD)){
-		tick_codeuseC++;
-		sensMotor2 = 1;
-	}
-	else {
-		tick_codeuseC--;
-		sensMotor2 = -1;
-	}
-	etatC = 1;
+  if (digitalRead(codeurPinC) == digitalRead(codeurPinD)){
+    tick_codeuseC--;
+    sensMotor2 = -1;
+  }
+  else {
+    tick_codeuseC++;
+    sensMotor2 = 1;
+  }
+  etatC = 1;
 }
 
 void compteurD(){
-	// tick_codeuseD++;
+  // tick_codeuseD++;
 
-	if (etatC = 0){
-		sensMotor2 = sensMotor2 * (-1);
-	}
+  if (etatC = 0){
+    sensMotor2 = sensMotor2 * (-1);
+  }
 
-	etatC = 0;
+  etatC = 0;
 }
 
 //-----------------------------------------------Commande Moteur--------------------------------------------------------------------
 
 void Motor_Setup()
 {
-	pinMode(Motor_Right_PWM_P, OUTPUT);
-	pinMode(Motor_Right_PWM_N, OUTPUT);
-	pinMode(Motor_Left_PWM_P, OUTPUT);
-	pinMode(Motor_Left_PWM_N, OUTPUT);
+  pinMode(Motor_Right_PWM_P, OUTPUT);
+  pinMode(Motor_Right_PWM_N, OUTPUT);
+  pinMode(Motor_Left_PWM_P, OUTPUT);
+  pinMode(Motor_Left_PWM_N, OUTPUT);
+  
+  //Right_Motor(0);
+  //Left_Motor(0);
 }
 
 void avance_recul(int pourcent_speed)
 {
-	Left_Motor(pourcent_speed);
-	Right_Motor(-pourcent_speed);
+  Left_Motor(pourcent_speed);
+  Right_Motor(-pourcent_speed);
 
 }
 
 void rotation(int pourcent_angle) //positif = Gauche , Negatif = Droit
 {
-	Left_Motor(pourcent_angle);
-	Right_Motor(pourcent_angle);
+  Left_Motor(pourcent_angle);
+  Right_Motor(pourcent_angle);
 }
 
 
 void Left_Motor(int pourcent_speed) //Reglage de la vitesse du moteur gauche
-	//Pour arréter le moteur : taper 0%
+  //Pour arréter le moteur : taper 0%
 {
-	if(pourcent_speed>=0)
-	{//En avant
-		analogWrite(Motor_Left_PWM_P, convert_pourcent_to_digital(pourcent_speed));
-		analogWrite(Motor_Left_PWM_N, 0);  
-	}
-	else
-	{//En arriére
-		pourcent_speed = pourcent_speed*(-1); //on rend positif le pourcentage.
+  if(pourcent_speed>=0)
+  {//En avant
+    analogWrite(Motor_Left_PWM_N, convert_pourcent_to_digital(pourcent_speed));
+    analogWrite(Motor_Left_PWM_P, 0);  
+  }
+  else
+  {//En arriére
+    pourcent_speed = pourcent_speed*(-1); //on rend positif le pourcentage.
 
-		analogWrite(Motor_Left_PWM_N, convert_pourcent_to_digital(pourcent_speed));
-		analogWrite(Motor_Left_PWM_P, 0);  
+    analogWrite(Motor_Left_PWM_P, convert_pourcent_to_digital(pourcent_speed));
+    analogWrite(Motor_Left_PWM_N, 0);  
 
-	}
+  }
 }
 
 void Right_Motor(int pourcent_speed) //Reglage de la vitesse du moteur gauche
-	//Pour arréter le moteur : taper 0%
+  //Pour arréter le moteur : taper 0%
 {
-	if(pourcent_speed>=0)
-	{//En avant
-		analogWrite(Motor_Right_PWM_P, convert_pourcent_to_digital(pourcent_speed));
-		analogWrite(Motor_Right_PWM_N, 0);  
-	}
-	else
-	{//En arriére
-		pourcent_speed = pourcent_speed*(-1); //on rend positif le pourcentage.
+  if(pourcent_speed>=0)
+  {//En avant
+    analogWrite(Motor_Right_PWM_N, convert_pourcent_to_digital(pourcent_speed));
+    analogWrite(Motor_Right_PWM_P, 0);  
+  }
+  else
+  {//En arriére
+    pourcent_speed = pourcent_speed*(-1); //on rend positif le pourcentage.
 
-		analogWrite(Motor_Right_PWM_N, convert_pourcent_to_digital(pourcent_speed));
-		analogWrite(Motor_Right_PWM_P, 0);  
-	}
+    analogWrite(Motor_Right_PWM_P, convert_pourcent_to_digital(pourcent_speed));
+    analogWrite(Motor_Right_PWM_N, 0);  
+  }
 }
 
 //---------------------------------------MATH------------------------------------------------------------------------------
 
 int convert_pourcent_to_digital(int pourcentage)  //Convertit un pourcentage positif en 0-255
 {
-	if(pourcentage>=0)
-	{//then
-		return(pourcentage*255/100);//convertion
-	}
-	else
-	{//Si le pourcentage est négatif, on renvois zero.
-		return(0);
-	}    
+  if(pourcentage>=0)
+  {//then
+    return(pourcentage*255/100);//convertion
+  }
+  else
+  {//Si le pourcentage est négatif, on renvois zero.
+    return(0);
+  }    
 }
 
 void can_callback() {
-	//	Serial.println(digitalRead(CAN_INTERRUPT_PIN));
-	uint8_t canDataReceived[8];
-	uint8_t recSize = canutil->whichRxDataLength(0); 
-	uint16_t stdId = canutil->whichStdID(0);
-	uint32_t extId = canutil->whichExtdID(0);
+  //  Serial.println(digitalRead(CAN_INTERRUPT_PIN));
+  uint8_t canDataReceived[8];
+  uint8_t recSize = canutil->whichRxDataLength(0); 
+  uint16_t stdId = canutil->whichStdID(0);
+  uint32_t extId = canutil->whichExtdID(0);
 
 
-	for (uint8_t i = 0; i < recSize; i++) { // gets the bytes
-		canDataReceived[i] = canutil->receivedDataValue(0, i);
-	}
+  for (uint8_t i = 0; i < recSize; i++) { // gets the bytes
+    canDataReceived[i] = canutil->receivedDataValue(0, i);
+  }
 
-	powerReceived = (int8_t)canDataReceived[0];
-	angleReceived = (int8_t)canDataReceived[1];
-	/*	Serial.print("Power received: ");
-		Serial.println(powerReceived);
-		Serial.print("Angle received: ");
-		Serial.println(angleReceived);
-		Serial.println(digitalRead(CAN_INTERRUPT_PIN));
-	 */
-	can_dev->write(CANINTF, 0x00);  // Clears all interrupts flags
+  powerReceived = (int8_t)canDataReceived[0];
+  angleReceived = (int8_t)canDataReceived[1];
+  /*  Serial.print("Power received: ");
+    Serial.println(powerReceived);
+    Serial.print("Angle received: ");
+    Serial.println(angleReceived);
+    Serial.println(digitalRead(CAN_INTERRUPT_PIN));
+   */
+  can_dev->write(CANINTF, 0x00);  // Clears all interrupts flags
 }
